@@ -1,6 +1,14 @@
 import { NextResponse } from "next/server";
 import { getRazorpay } from "@/lib/razorpay";
 import { clientConfig } from "@/client.config";
+import {
+  ATTR_COOKIE,
+  buildFbc,
+  packJsonNote,
+  readAttrCookie,
+  resolveAttribution,
+  type StoredAttribution,
+} from "@/lib/attribution";
 import type {
   ApiErrorResponse,
   CreateOrderRequest,
@@ -11,6 +19,13 @@ export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
 const SUPPORTED_CURRENCIES = new Set(["INR"]);
+
+/** Read one cookie out of a raw Cookie header. */
+function readCookie(cookieHeader: string, name: string): string | undefined {
+  if (!cookieHeader) return undefined;
+  const match = cookieHeader.match(new RegExp(`(?:^|;\\s*)${name}=([^;]+)`));
+  return match ? decodeURIComponent(match[1]) : undefined;
+}
 
 export async function POST(
   request: Request,
@@ -71,7 +86,7 @@ export async function POST(
   // delivery path.
   //
   // Razorpay's documented limit is 15 keys per `notes` object with values up
-  // to 256 chars each. We keep the count at 15 exactly. Empty values are
+  // to 256 chars each. We sit at 14, leaving one spare. Empty values are
   // sent as "" so the webhook can deterministically rebuild the payload.
   //
   // CRITICAL: The first key is `funnel: clientConfig.funnel.slug`. This is
@@ -84,22 +99,62 @@ export async function POST(
   // and inflating Meta conversion counts. The webhook reads orders.fetch
   // notes and skips silently when notes.funnel !== clientConfig.funnel.slug.
   //
-  // `referrer` was dropped to make room for `funnel`. Verify-payment still
-  // ships `referrer` from browser sessionStorage on its primary path; only
-  // the webhook fallback loses it (and that's a rare path).
+  // ── L2/L3/L4/L5 — attribution is resolved SERVER-SIDE ───────────────────
   //
-  // `gclid` was dropped to make room for `fbp` (the Facebook browser-id
-  // cookie). fbp is critical for Meta CAPI EMQ — Meta credits a ~13%
-  // match-quality boost for sending it on every event. Without storing it
-  // in order notes, the webhook fallback path would have no way to recover
-  // it (it's a random per-browser cookie, not derivable from anything else).
-  // gclid was only useful for Google Ads CAPI, which this Meta-driven
-  // funnel doesn't fire. The verify-payment path still ships gclid from
-  // browser sessionStorage on its primary path; only the webhook fallback
-  // loses it.
+  // The `arjun_attr` cookie (written by middleware.ts before any JS runs) is
+  // the primary source. The client's `body.utm` is demoted to a supplement:
+  // it comes from sessionStorage, which is only populated if a React effect
+  // won a race against the CTA tap — the exact race that produced paid orders
+  // with every utm_* blank.
+  //
+  // Notes budget: Razorpay allows 15 keys × 256 chars. The five utm_* keys
+  // are consolidated into ONE packed `utm` note, which frees the slots for
+  // `rf` and `fbc` — the two fields that make attribution recoverable after
+  // the fact. Count below is 14/15.
   const customer = body.customer ?? {};
-  const utm = body.utm ?? {};
+  const bodyUtm = body.utm ?? {};
   const clamp = (v: string | undefined): string => (v ?? "").toString().slice(0, 256);
+
+  const cookieHeader = request.headers.get("cookie") ?? "";
+  const cookieAttr = readAttrCookie(readCookie(cookieHeader, ATTR_COOKIE));
+  const cookieFbc = readCookie(cookieHeader, "_fbc");
+  const cookieFbp = readCookie(cookieHeader, "_fbp");
+
+  // Map the client's legacy `utm_*` shape onto the compact storage keys.
+  const bodyAttr: StoredAttribution = {
+    source: bodyUtm.utm_source,
+    medium: bodyUtm.utm_medium,
+    campaign: bodyUtm.utm_campaign,
+    content: bodyUtm.utm_content,
+    term: bodyUtm.utm_term,
+    fbclid: bodyUtm.fbclid,
+    gclid: bodyUtm.gclid,
+    landing_url: bodyUtm.landing_url,
+    referrer: bodyUtm.referrer,
+  };
+
+  const resolved = resolveAttribution({
+    cookieAttr,
+    bodyAttr,
+    referrer: bodyUtm.referrer ?? request.headers.get("referer") ?? "",
+    landingUrl: bodyUtm.landing_url,
+    fbc: cookieFbc,
+  });
+
+  // The real `_fbc` cookie wins; synthesise only when the pixel never set one.
+  // Synthesising uses the CLICK timestamp we captured, not "now" — stamping
+  // payment time as click time silently mis-dates the attribution window.
+  const fbc =
+    cookieFbc ||
+    (resolved.fbclid ? buildFbc(resolved.fbclid, resolved.fbclidTs) : "");
+
+  if (resolved.utmSource === "none" && resolved.clidSource === "none") {
+    console.error(
+      "[create-order] ATTRIBUTION MISSING — no utm_* and no fbclid from cookie, body, referrer or _fbc",
+    );
+  } else {
+    console.log(`[create-order] attribution ${resolved.provenance}`);
+  }
 
   const notes: Record<string, string> = {
     funnel: clientConfig.funnel.slug,
@@ -109,14 +164,22 @@ export async function POST(
     customer_phone: clamp(customer.phone),
     country_code: clamp(customer.countryCode),
     city: clamp(customer.city),
-    utm_source: clamp(utm.utm_source),
-    utm_medium: clamp(utm.utm_medium),
-    utm_campaign: clamp(utm.utm_campaign),
-    utm_content: clamp(utm.utm_content),
-    utm_term: clamp(utm.utm_term),
-    fbclid: clamp(utm.fbclid),
-    fbp: clamp(body.fbp),
-    landing_url: clamp(utm.landing_url),
+    // L5 — JSON-safe packing. Never `JSON.stringify(...).slice(0, 256)`:
+    // that slices mid-JSON on a long campaign name and the reader loses
+    // every field instead of one being clipped.
+    utm: packJsonNote({
+      s: resolved.utm.source,
+      m: resolved.utm.medium,
+      c: resolved.utm.campaign,
+      n: resolved.utm.content,
+      t: resolved.utm.term,
+    }),
+    fbclid: clamp(resolved.fbclid),
+    ts: clamp(String(resolved.fbclidTs || "")),
+    fbc: clamp(fbc),
+    fbp: clamp(body.fbp || cookieFbp),
+    rf: clamp(resolved.referrer),
+    landing_url: clamp(resolved.landingUrl),
   };
 
   try {

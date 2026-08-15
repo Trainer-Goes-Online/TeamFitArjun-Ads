@@ -1,4 +1,5 @@
 import type { UtmPayload } from "./types";
+import { ATTR_COOKIE, readAttrCookie } from "./attribution";
 
 const UTM_KEYS = [
   "utm_source",
@@ -75,12 +76,31 @@ export function readCookie(name: string): string | undefined {
 }
 
 /**
- * Synthesize a Meta `_fbc` value from a `fbclid` URL parameter if the _fbc
- * cookie is missing. Format per Meta spec: `fb.1.{unix_ms}.{fbclid}`.
- * Improves EMQ when the user came from a Facebook click but the pixel cookie
- * hadn't set yet.
+ * Read attribution from the `arjun_attr` cookie into the legacy `utm_*`
+ * shape this module exposes.
+ *
+ * The cookie is written by middleware.ts on the very first request, so it is
+ * populated even when sessionStorage is empty — a new tab, an in-app-browser
+ * handoff to Safari, or a hydration race lost to the CTA. Callers merge it
+ * UNDER sessionStorage (which may hold a fresher last-touch value).
+ *
+ * `buildFbcFromFbclid` used to live here. It is gone: it stamped
+ * `Date.now()` as the click time, which is the payment moment on the webhook
+ * path — hours off. Use `buildFbc(fbclid, ts)` from lib/attribution.ts with a
+ * real captured timestamp instead.
  */
-export function buildFbcFromFbclid(fbclid: string | undefined): string | undefined {
-  if (!fbclid) return undefined;
-  return `fb.1.${Date.now()}.${fbclid}`;
+export function readUtmFromAttrCookie(): UtmPayload {
+  const raw = readCookie(ATTR_COOKIE);
+  const attr = readAttrCookie(raw);
+  const out: UtmPayload = {};
+  if (attr.source) out.utm_source = attr.source;
+  if (attr.medium) out.utm_medium = attr.medium;
+  if (attr.campaign) out.utm_campaign = attr.campaign;
+  if (attr.content) out.utm_content = attr.content;
+  if (attr.term) out.utm_term = attr.term;
+  if (attr.fbclid) out.fbclid = attr.fbclid;
+  if (attr.gclid) out.gclid = attr.gclid;
+  if (attr.referrer) out.referrer = attr.referrer;
+  if (attr.landing_url) out.landing_url = attr.landing_url;
+  return out;
 }

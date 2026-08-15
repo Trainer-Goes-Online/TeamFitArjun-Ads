@@ -13,6 +13,7 @@ import { clientConfig } from "@/client.config";
 import {
   readUtmFromStorage,
   readUtmFromSearch,
+  readUtmFromAttrCookie,
   utmToQueryString,
   readCookie,
 } from "@/lib/utm";
@@ -102,11 +103,18 @@ export function CheckoutView() {
   const flagBoxRef = useRef<HTMLDivElement>(null);
 
   // Read UTM once on mount — used in API calls + Razorpay notes + Pabbly
+  // Precedence: live URL → sessionStorage → arjun_attr cookie. The cookie is
+  // written by middleware.ts before any JS runs, so it still has the campaign
+  // when sessionStorage is empty (new tab, in-app-browser handoff, or a
+  // hydration race lost on the landing page). The server re-resolves all of
+  // this from the cookie anyway — this is for the hidden fields and the body
+  // we send to create-order.
   const utm = useMemo<UtmPayload>(() => {
     if (typeof window === "undefined") return {};
     const urlUtm = readUtmFromSearch(window.location.search);
     const stored = readUtmFromStorage(clientConfig.funnel.sessionStorageKey);
-    return { ...stored, ...urlUtm };
+    const cookieUtm = readUtmFromAttrCookie();
+    return { ...cookieUtm, ...stored, ...urlUtm };
   }, []);
 
   // Lazy-detect Razorpay SDK readiness (loaded via <Script> in layout.tsx)

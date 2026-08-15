@@ -6,7 +6,7 @@ import { fireMetaCapi } from "@/lib/capi";
 import { claimEventId } from "@/lib/dedup";
 import { getPaymentDedupState, markFires } from "@/lib/payment-dedup";
 import { extractClientIp, extractUserAgent } from "@/lib/request";
-import { buildFbcFromFbclid } from "@/lib/utm";
+import { buildFbc, readNotesAttribution, resolveAttribution } from "@/lib/attribution";
 import { isProductionServer, isPaidAmount } from "@/lib/tracking-gate";
 import { clientConfig } from "@/client.config";
 import type { CustomerPayload, UtmPayload } from "@/lib/types";
@@ -118,21 +118,41 @@ export async function POST(request: Request): Promise<NextResponse> {
     city: orderNotes.city ?? "",
   };
 
+  // ── L6 — re-resolve attribution from notes ──────────────────────────────
+  //
+  // Reads BOTH note shapes so nothing breaks mid-deploy:
+  //   - new: a single packed `utm` JSON note + `rf` + `fbc` + `ts`
+  //   - legacy: flat utm_source/utm_medium/... keys, no rf, no fbc
+  // Orders created before this shipped are repaired here: utm_* is recovered
+  // from the referrer, and fbclid from `_fbc`, both via resolveAttribution.
+  const notesAttr = readNotesAttribution(orderNotes);
+
+  const resolvedAttr = resolveAttribution({
+    cookieAttr: notesAttr,
+    referrer: orderNotes.rf ?? "",
+    landingUrl: orderNotes.landing_url ?? "",
+    fbc: orderNotes.fbc ?? "",
+  });
+
   const utm: UtmPayload = {
-    utm_source: orderNotes.utm_source ?? "",
-    utm_medium: orderNotes.utm_medium ?? "",
-    utm_campaign: orderNotes.utm_campaign ?? "",
-    utm_content: orderNotes.utm_content ?? "",
-    utm_term: orderNotes.utm_term ?? "",
-    fbclid: orderNotes.fbclid ?? "",
-    gclid: orderNotes.gclid ?? "",
-    landing_url: orderNotes.landing_url ?? "",
-    // `referrer` was dropped from Razorpay notes to make room for the
-    // `funnel` guardrail (15-key limit). Webhook-fallback fires therefore
-    // ship referrer="". The primary verify-payment path still includes
-    // referrer from the browser's sessionStorage.
-    referrer: "",
+    utm_source: resolvedAttr.utm.source,
+    utm_medium: resolvedAttr.utm.medium,
+    utm_campaign: resolvedAttr.utm.campaign,
+    utm_content: resolvedAttr.utm.content,
+    utm_term: resolvedAttr.utm.term,
+    fbclid: resolvedAttr.fbclid,
+    gclid: resolvedAttr.gclid,
+    landing_url: resolvedAttr.landingUrl,
+    referrer: resolvedAttr.referrer,
   };
+
+  if (resolvedAttr.utmSource === "none" && resolvedAttr.clidSource === "none") {
+    console.error(
+      `[webhook] ATTRIBUTION MISSING for payment ${paymentId} — order ${orderId} has no utm_*, no fbclid, no recoverable referrer or _fbc`,
+    );
+  } else {
+    console.log(`[webhook] attribution ${resolvedAttr.provenance} for ${paymentId}`);
+  }
 
   if (!customer.firstName && !customer.lastName) {
     console.warn(
@@ -150,17 +170,20 @@ export async function POST(request: Request): Promise<NextResponse> {
   const eventSourceUrl = `https://${clientConfig.brand.domain}/thank-you`;
   const valueRupees = (payment.amount ?? clientConfig.pricing.paise) / 100;
 
-  // Recover fbc + fbp for Meta CAPI from order notes (set at create-order
-  // time by CheckoutView). Razorpay's webhook payload itself carries
-  // neither — fbc/fbp are browser cookies and the webhook is server-to-
-  // server, so without this recovery step the webhook-path CAPI fire
-  // would lose Meta's ~13% (fbp) + ~16% (fbc) EMQ boost.
+  // Recover fbc + fbp for Meta CAPI from order notes (captured server-side at
+  // create-order time). Razorpay's webhook payload carries neither — both are
+  // browser cookies and this is a server-to-server call — so without this
+  // recovery the CAPI fire loses Meta's ~13% (fbp) + ~16% (fbc) EMQ boost.
   //
-  // fbc is reconstructed from fbclid using Meta's documented format:
-  // `fb.1.{unix_ms}.{fbclid}`. This is exactly what the browser-side
-  // _fbc cookie would contain.
+  // The REAL `_fbc` cookie is used when create-order stored it. Only when it
+  // is absent do we synthesise `fb.1.{ts}.{fbclid}`, and then with the click
+  // timestamp we captured — not Date.now(). The old code always synthesised
+  // at webhook time, stamping the PAYMENT moment as the CLICK moment, which
+  // can be hours late and mis-dates Meta's attribution window.
   const fbp = orderNotes.fbp ?? "";
-  const fbc = buildFbcFromFbclid(orderNotes.fbclid) ?? "";
+  const fbc =
+    orderNotes.fbc ||
+    (resolvedAttr.fbclid ? buildFbc(resolvedAttr.fbclid, resolvedAttr.fbclidTs) : "");
 
   const onProductionHost = isProductionServer(request);
   const isRealPurchase = isPaidAmount(valueRupees);

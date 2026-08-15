@@ -135,13 +135,16 @@ Every server event ships:
 - [lib/pabbly.ts](lib/pabbly.ts) — webhook payload builder, UTM passthrough
 - [lib/dedup.ts](lib/dedup.ts) — in-memory `claimEventId()` lock (server)
 - [lib/hash.ts](lib/hash.ts) — SHA-256 + Meta-spec lowercase/trim/digits normalisation
-- [lib/utm.ts](lib/utm.ts) — `sessionStorage` UTM persistence + `fbc` synth from `?fbclid=`
+- [lib/attribution.ts](lib/attribution.ts) — **Edge-safe** attribution core: URL parsing, `_fbc` splitting, cookie read/merge, `resolveAttribution()` precedence, `readNotesAttribution()` (both note shapes), `packJsonNote()`. Imported by middleware — no `node:crypto`, no DOM.
+- [lib/utm.ts](lib/utm.ts) — `sessionStorage` UTM persistence + `readUtmFromAttrCookie()` fallback
 - [lib/request.ts](lib/request.ts) — extract IP / UA / referer from Next `Request`
 - [lib/seo.ts](lib/seo.ts) — per-page `metadata` builder
 - [lib/types.ts](lib/types.ts) — shared API contract types (`CreateOrderRequest`, `CustomerPayload`, etc.)
 
 ### Other
-- [components/UtmCapture.tsx](components/UtmCapture.tsx) — mounted on every page, writes `sessionStorage.arjun_utm` and landing_url
+- [middleware.ts](middleware.ts) — **L1 attribution capture at the edge.** Writes the `arjun_attr` cookie from the query string before a byte of JS runs. This is the fix for blank UTMs on paid orders: the old capture was a React `useEffect` that had to beat the user's CTA tap, and lost that race inside the Facebook in-app browser.
+- [components/UtmCapture.tsx](components/UtmCapture.tsx) — mounted on every page; a SUPPLEMENT to the middleware, keeps `sessionStorage.arjun_utm` warm for same-tab client use
+- [scripts/verify-attribution.ts](scripts/verify-attribution.ts) — `npm run verify:attribution`. 34 assertions over the real regression fixture. Run after ANY change to attribution.
 - [client.config.ts](client.config.ts) — single source of truth for brand/pricing/Calendly/CAPI knobs
 - [.env.local.example](.env.local.example) — every required env var with comments; copy to `.env.local`
 
@@ -158,6 +161,7 @@ Every server event ships:
 Keys are defined in `clientConfig.funnel.*` — never hardcode.
 
 ### First-party cookies (persist 30 days)
+- `arjun_attr` — JSON attribution captured **at the edge by [middleware.ts](middleware.ts) before any JS runs**: `{source, medium, campaign, content, term, fbclid, gclid, ts, landing_url, referrer}`. This is the AUTHORITATIVE attribution source; `sessionStorage.arjun_utm` is only a same-tab supplement. Attribution fields are last-touch; `landing_url`/`referrer` are first-touch and written once. `SameSite=Lax`, `Path=/`, not `httpOnly` (the client reads it as a fallback). Never merge with `arjun_mam` — two cookies, two concerns.
 - `arjun_mam` — JSON of hashed `{ em, ph, fn, ln, ct, country, external_id }`. Written by [lib/analytics.ts](lib/analytics.ts) `setMetaAdvancedMatching()`. Read by the inline script in [app/layout.tsx](app/layout.tsx) before every PageView. `SameSite=Lax`, `Path=/`.
 
 ### Meta-managed cookies
@@ -192,6 +196,10 @@ Env vars live in **one file**: `.env.local`. There is no `.env.local.example` �
 - Do NOT rename the `arjun_mam` cookie without updating the regex in the inline script in [app/layout.tsx](app/layout.tsx) AND the constant in [lib/analytics.ts](lib/analytics.ts).
 - Do NOT hardcode the price — it's read from `NEXT_PUBLIC_PRICE` so server, browser, Razorpay, CAPI and Pabbly all stay in sync.
 - Do NOT change a sessionStorage key without updating `clientConfig.funnel.*` and every reader.
+- Do NOT move attribution capture back into a React effect, and do NOT delete [middleware.ts](middleware.ts). Client-side-only capture has a reliability ceiling set by hydration speed on the slowest device class we buy traffic on, and the misses are biased toward in-app browsers — i.e. exactly our paid social traffic.
+- Do NOT derive `fbclid` from the referrer. Razorpay caps note values at 256 chars and the fbclid sits at the END of an ad URL, so it comes back truncated (49 of 195 chars observed) — and a truncated fbclid looks valid while mis-attributing. `_fbc` is the only complete source; use `parseFbc()`.
+- Do NOT replace `packJsonNote()` with `JSON.stringify(x).slice(0, 256)`. That slices mid-JSON on a long campaign name, the reader's `JSON.parse` throws, and EVERY field is lost instead of one being clipped.
+- After ANY attribution change, run `npm run verify:attribution` — all 34 assertions must pass.
 - If a value belongs to the brand (name, email, Calendly URL, Instagram handle), it goes in [client.config.ts](client.config.ts).
 - The webhook ([app/api/razorpay/webhook/route.ts](app/api/razorpay/webhook/route.ts)) is the sole tracking authority. It MUST remain idempotent via `claimEventId()` + the `pabbly_fired`/`capi_fired` markers on Razorpay payment notes — Razorpay retries webhooks on any non-2xx response, so a duplicate delivery is normal, not an error.
 - In Events Manager: **Auto Event Detection OFF**, **Automatic Advanced Matching OFF**. Our code is the only event source and ships its own (manual) advanced matching via the cookie.

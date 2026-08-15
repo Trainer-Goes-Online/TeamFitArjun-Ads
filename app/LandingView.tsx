@@ -3,7 +3,12 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { clientConfig } from "@/client.config";
-import { readUtmFromStorage, utmToQueryString } from "@/lib/utm";
+import {
+  readUtmFromStorage,
+  readUtmFromSearch,
+  readUtmFromAttrCookie,
+  utmToQueryString,
+} from "@/lib/utm";
 import { trackGa4EventOnce } from "@/lib/ga4";
 import { buildVimeoSrc, forceUnmute, requestFullscreen } from "@/lib/video";
 
@@ -292,7 +297,15 @@ export function LandingView({ posterUrl = HERO_THUMB_URL }: { posterUrl?: string
   useEffect(() => {
     if (typeof window === "undefined") return;
 
-    const utm = readUtmFromStorage(clientConfig.funnel.sessionStorageKey);
+    // Carry attribution forward on the CTA href. Precedence mirrors checkout:
+    // live URL → sessionStorage → arjun_attr cookie. Reading the live search
+    // matters most — if this effect is racing the user's tap, the URL is the
+    // one source guaranteed to be correct right now.
+    const utm = {
+      ...readUtmFromAttrCookie(),
+      ...readUtmFromStorage(clientConfig.funnel.sessionStorageKey),
+      ...readUtmFromSearch(window.location.search),
+    };
     const qs = utmToQueryString(utm);
     setCheckoutHref(`/checkout?from=landing${qs}`);
 
