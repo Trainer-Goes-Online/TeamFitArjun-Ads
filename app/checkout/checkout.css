@@ -1347,3 +1347,128 @@
   opacity:.7; font-weight:400; margin-right:1px;
 }
 .af-root .co-pay-now{ font-weight:800; }
+
+
+/* ══════════════════════════════════════════════════════════════════════════
+   Booking-awareness notice + consent gate
+   Buyers who close the tab before the post-payment redirect reaches
+   /book-a-call have paid but booked nothing. Two elements set the
+   expectation up front: a notice above the form fields, and a consent row
+   that gates the pay button. Both reuse the offer-banner visual language
+   (tinted gold panel, raised icon chip) so they read as native to the page.
+   ══════════════════════════════════════════════════════════════════════════ */
+
+/* ── Notice — tinted panel above the form fields ────────────────────────── */
+.af-root .co-notice{
+  display:flex; align-items:flex-start; gap:12px;
+  padding:14px 16px; margin:0 0 22px;
+  border-radius:var(--r,16px);
+  background:linear-gradient(180deg,#FFFDF8 0%,#FBF1DE 100%);
+  border:1px solid rgba(154,102,20,.30);
+  border-left:4px solid var(--brand,#9A6614);
+  box-shadow:0 4px 14px rgba(154,102,20,.12), inset 0 1px 0 rgba(255,255,255,.85);
+}
+/* Themed clock icon in a raised gold chip — matches .co-offer-ic, no emoji. */
+.af-root .co-notice-ic{
+  flex:0 0 38px; width:38px; height:38px; border-radius:11px;
+  display:grid; place-items:center; color:var(--brand,#9A6614);
+  background:linear-gradient(180deg,#FFF9EC 0%,#F3E2C4 100%);
+  border:1px solid rgba(154,102,20,.30);
+  box-shadow:
+    0 4px 9px rgba(154,102,20,.22),
+    inset 0 1.5px 0 rgba(255,255,255,.95),
+    inset 0 -2px 0 rgba(154,102,20,.18);
+}
+.af-root .co-notice-ic svg{ width:20px; height:20px; }
+.af-root .co-notice-text{
+  margin:0!important; font-size:13.5px!important; line-height:1.55!important;
+  color:var(--ink-soft,#544E45)!important; overflow-wrap:break-word;
+}
+.af-root .co-notice-text strong{
+  color:var(--brand-deep,#7C5210)!important; font-weight:800!important;
+}
+
+/* ── Consent — tinted, tappable row directly above the pay button ───────── */
+.af-root .co-consent{
+  display:flex; align-items:flex-start; gap:11px;
+  padding:13px 15px; margin:0 0 14px;
+  border-radius:var(--r-sm,10px);
+  background:linear-gradient(180deg,#FFFDF8 0%,#FBF1DE 100%);
+  border:1px solid rgba(154,102,20,.30);
+  box-shadow:inset 0 1px 0 rgba(255,255,255,.85);
+  cursor:pointer; user-select:none;
+  transition:border-color .2s, box-shadow .2s, background .2s;
+}
+.af-root .co-consent:hover{
+  border-color:var(--brand,#9A6614);
+  box-shadow:0 3px 10px rgba(154,102,20,.14), inset 0 1px 0 rgba(255,255,255,.85);
+}
+.af-root .co-consent-text{
+  font-size:13px!important; line-height:1.5!important;
+  color:var(--ink-soft,#544E45)!important; overflow-wrap:break-word;
+}
+.af-root .co-consent-text strong{
+  color:var(--brand-deep,#7C5210)!important; font-weight:800!important;
+}
+
+/* Themed checkbox — a real <input>, restyled. Keeps focus, tab order and
+   screen-reader semantics that a faked <span> box would throw away. */
+.af-root .co-consent-box{
+  appearance:none; -webkit-appearance:none; -moz-appearance:none;
+  flex:0 0 auto; width:20px; height:20px; margin:1px 0 0; padding:0;
+  border-radius:6px; cursor:pointer; position:relative;
+  background:linear-gradient(180deg,#FFFFFF 0%,#FDF8EF 100%);
+  border:1.5px solid var(--border-strong,#D9CCB4);
+  box-shadow:inset 0 1px 2px rgba(154,102,20,.10);
+  transition:background .18s, border-color .18s, box-shadow .18s;
+}
+.af-root .co-consent:hover .co-consent-box{ border-color:var(--brand,#9A6614); }
+.af-root .co-consent-box:focus-visible{
+  outline:none; border-color:var(--brand,#9A6614); box-shadow:var(--in-focus);
+}
+.af-root .co-consent-box:checked{
+  background:linear-gradient(180deg,var(--brand-light,#C9954D) 0%,var(--brand,#9A6614) 100%);
+  border-color:var(--brand-deep,#7C5210);
+  box-shadow:0 2px 6px rgba(154,102,20,.30), inset 0 1px 0 rgba(255,255,255,.35);
+}
+/* Stroked white tick — same round-cap language as every other icon here. */
+.af-root .co-consent-box:checked::after{
+  content:""; position:absolute; inset:0;
+  background:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23fff' stroke-width='3.4' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 12.5l4.6 4.6L19 7.5'/%3E%3C/svg%3E") center/13px 13px no-repeat;
+}
+
+/* ── Error state — danger token, matching the field-error language ──────── */
+.af-root .co-consent.err{
+  background:var(--danger-soft,#FEE2E2);
+  border-color:var(--danger,#B4231D);
+  animation:coConsentShake .4s ease;
+}
+.af-root .co-consent.err .co-consent-text{ color:var(--danger,#B4231D)!important; }
+.af-root .co-consent.err .co-consent-text strong{ color:var(--danger,#B4231D)!important; }
+.af-root .co-consent.err .co-consent-box{ border-color:var(--danger,#B4231D); }
+@keyframes coConsentShake{
+  0%,100%{ transform:translateX(0); }
+  25%{ transform:translateX(-4px); }
+  75%{ transform:translateX(4px); }
+}
+.af-root .co-consent-msg{
+  margin:-8px 0 14px!important;
+  font-size:12.5px!important; font-weight:700!important;
+  color:var(--danger,#B4231D)!important;
+}
+
+@media (prefers-reduced-motion:reduce){
+  .af-root .co-consent.err{ animation:none; }
+}
+
+/* ── Mobile: tighter padding, larger tap target ─────────────────────────── */
+@media (max-width:480px){
+  .af-root .co-notice{ padding:12px 13px; margin-bottom:18px; gap:10px; }
+  .af-root .co-notice-ic{ flex:0 0 34px; width:34px; height:34px; border-radius:10px; }
+  .af-root .co-notice-ic svg{ width:18px; height:18px; }
+  .af-root .co-notice-text{ font-size:12.5px!important; }
+  .af-root .co-consent{ padding:12px 13px; gap:10px; }
+  .af-root .co-consent-text{ font-size:12.5px!important; }
+  .af-root .co-consent-box{ width:22px; height:22px; }
+  .af-root .co-consent-box:checked::after{ background-size:14px 14px; }
+}
