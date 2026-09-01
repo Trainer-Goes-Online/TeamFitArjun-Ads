@@ -100,6 +100,11 @@ export function CheckoutView() {
   const [sdkReady, setSdkReady] = useState(false);
   const [offerTime, setOfferTime] = useState("15:00");
   const [changeCodeOpen, setChangeCodeOpen] = useState(false);
+  // Booking-awareness gate. Buyers who close the tab before the post-payment
+  // redirect reaches /book-a-call have paid but booked nothing, so the pay
+  // button stays inert until they acknowledge the ~2-minute wait.
+  const [consent, setConsent] = useState(false);
+  const [consentError, setConsentError] = useState(false);
   const flagBoxRef = useRef<HTMLDivElement>(null);
 
   // Read UTM once on mount — used in API calls + Razorpay notes + Pabbly
@@ -300,7 +305,11 @@ export function CheckoutView() {
     // is "user attempted to pay", not "user submitted a valid form".
     // A half-filled bounce still counts. Deduped once-per-browser.
     trackGa4EventOnce("initiate_checkout");
-    if (!validateAll()) {
+    const fieldsOk = validateAll();
+    // Flag the consent box before bailing on field errors so a single tap
+    // surfaces every blocker at once, rather than drip-feeding them.
+    if (!consent) setConsentError(true);
+    if (!fieldsOk) {
       const firstBad = (Object.keys(form) as FieldKey[]).find(
         (k) => !validateField(k, form[k]),
       );
@@ -309,6 +318,13 @@ export function CheckoutView() {
           .getElementById(`f-${firstBad}`)
           ?.scrollIntoView({ behavior: "smooth", block: "center" });
       }
+      return;
+    }
+    // Booking-awareness gate — never open Razorpay until it is acknowledged.
+    if (!consent) {
+      document
+        .getElementById("co-consent")
+        ?.scrollIntoView({ behavior: "smooth", block: "center" });
       return;
     }
     if (!sdkReady || !window.Razorpay) {
@@ -638,6 +654,26 @@ export function CheckoutView() {
                     <h2>Your Details</h2>
                     <p className="hint">We&apos;ll send your call link to these details.</p>
                   </div>
+                </div>
+
+                {/* Booking-awareness notice — sets the redirect expectation
+                    before payment, so nobody closes the tab mid-handoff. */}
+                <div className="co-notice" role="note">
+                  <span className="co-notice-ic" aria-hidden="true">
+                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
+                      <circle cx="12" cy="13" r="8.2" />
+                      <path d="M12 9.2V13l2.6 1.7" />
+                      <path d="M9.2 2.4h5.6" />
+                      <path d="M19.4 5.6l1.5-1.5" />
+                    </svg>
+                  </span>
+                  <p className="co-notice-text">
+                    <strong>Important — don&apos;t close this page after paying.</strong>{" "}
+                    The moment your payment succeeds, please wait about{" "}
+                    <strong>2 minutes</strong> without closing or refreshing. You&apos;ll be
+                    redirected automatically to the calendar where you book your call.
+                    Leaving early may stop your booking from being completed.
+                  </p>
                 </div>
 
                 <div className="co-row">
@@ -1031,6 +1067,37 @@ export function CheckoutView() {
                 </div>
                 </div>
                 {/* ↑ end .co-sum-collapse — pay button and below stay visible */}
+
+                {/* Booking-awareness consent — gates the pay button. Sits
+                    outside .co-sum-collapse so it is never hidden on mobile. */}
+                <label
+                  id="co-consent"
+                  className={`co-consent ${consentError ? "err" : ""}`}
+                  htmlFor="co-consent-box"
+                >
+                  <input
+                    type="checkbox"
+                    id="co-consent-box"
+                    className="co-consent-box"
+                    checked={consent}
+                    aria-invalid={consentError}
+                    aria-describedby={consentError ? "co-consent-msg" : undefined}
+                    onChange={(e) => {
+                      setConsent(e.target.checked);
+                      if (e.target.checked) setConsentError(false);
+                    }}
+                  />
+                  <span className="co-consent-text">
+                    I understand that after a successful payment I&apos;ll be redirected
+                    to book my call, and I&apos;ll keep this page open for up to{" "}
+                    <strong>2 minutes</strong> to complete my booking.
+                  </span>
+                </label>
+                {consentError ? (
+                  <p className="co-consent-msg" id="co-consent-msg" role="alert">
+                    Please confirm you&apos;ll wait for the redirect to book your call.
+                  </p>
+                ) : null}
 
                 <button
                   type="submit"
