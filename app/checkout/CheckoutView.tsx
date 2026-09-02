@@ -102,7 +102,7 @@ export function CheckoutView() {
   const [changeCodeOpen, setChangeCodeOpen] = useState(false);
   // Booking-awareness gate. Buyers who close the tab before the post-payment
   // redirect reaches /book-a-call have paid but booked nothing, so the pay
-  // button stays inert until they acknowledge the ~2-minute wait.
+  // button stays inert until they acknowledge the ~10-second wait.
   const [consent, setConsent] = useState(false);
   const [consentError, setConsentError] = useState(false);
   const flagBoxRef = useRef<HTMLDivElement>(null);
@@ -668,11 +668,12 @@ export function CheckoutView() {
                     </svg>
                   </span>
                   <p className="co-notice-text">
-                    <strong>Important — don&apos;t close this page after paying.</strong>{" "}
-                    The moment your payment succeeds, please wait about{" "}
-                    <strong>2 minutes</strong> without closing or refreshing. You&apos;ll be
-                    redirected automatically to the calendar where you book your call.
-                    Leaving early may stop your booking from being completed.
+                    <strong>Important: Please don&apos;t close this page after paying.</strong>{" "}
+                    The moment your payment succeeds, please wait up to{" "}
+                    <strong>10 seconds</strong> without closing or refreshing this tab.
+                    You&apos;ll then be automatically taken to the calendar to select your
+                    preferred date and time and book your call. Leaving early may stop your
+                    booking from being completed.
                   </p>
                 </div>
 
@@ -1088,14 +1089,15 @@ export function CheckoutView() {
                     }}
                   />
                   <span className="co-consent-text">
-                    I understand that after a successful payment I&apos;ll be redirected
-                    to book my call, and I&apos;ll keep this page open for up to{" "}
-                    <strong>2 minutes</strong> to complete my booking.
+                    I understand that after payment, I&apos;ll wait up to{" "}
+                    <strong>10 seconds</strong> for the booking page to open, then select
+                    my preferred date and time to book my call.
                   </span>
                 </label>
                 {consentError ? (
                   <p className="co-consent-msg" id="co-consent-msg" role="alert">
-                    Please confirm you&apos;ll wait for the redirect to book your call.
+                    Please confirm you&apos;ll stay on this page for up to 10 seconds to
+                    complete your call booking.
                   </p>
                 ) : null}
 
